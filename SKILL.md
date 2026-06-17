@@ -1,11 +1,11 @@
 ---
 name: mod-analyzer-skill
-description: "用于分析 Minecraft Mod / 模组 / mod jar / Forge / NeoForge / Fabric / Quilt 项目。用户要求反编译 jar、探查模组代码与资源、理解模组玩法、梳理物品方块机制、生成模组简介、主要玩法、核心玩法循环、细粒度流程或游戏内容文档时必须使用。该 skill 会先静态检查 jar，再按 loader 元数据、数据包资源、lang、recipe、registry、event、mixin、GUI、网络包与配置追踪证据，避免只凭类名猜测。"
+description: "用于分析 Minecraft Mod / 模组 / mod jar / Forge / NeoForge / Fabric / Quilt 项目。用户要求反编译 jar、探查模组代码与资源、理解模组玩法、梳理物品方块机制、生成模组简介、主要玩法、核心玩法循环、细粒度流程或游戏内容文档时必须使用。该 skill 会先静态检查 jar，再按 loader 元数据、数据包资源、lang、recipe、registry、event、mixin、GUI、网络包与配置追踪证据，避免只凭类名猜测。不要把本 skill 用于普通 Java 代码重构、恶意篡改第三方 mod、绕过授权、提取商业资产再发布等任务。"
 ---
 
 # Mod Analyzer Skill
 
-> Minecraft Mod 反编译、代码探查与游戏内容文档生成 skill。目标不是做代码审计报告，而是把 jar / 源码 / 数据包资源转译成玩家与策划能读懂的“模组游戏内容文档”。
+> Minecraft Mod 反编译、代码探查与游戏内容文档生成 skill。目标不是做代码审计报告，而是把 jar / 源码 / 数据包资源转译成玩家与策划能读懂的"模组游戏内容文档"。
 
 ## 何时使用
 
@@ -14,7 +14,7 @@ description: "用于分析 Minecraft Mod / 模组 / mod jar / Forge / NeoForge /
 - 反编译 Forge / NeoForge / Fabric / Quilt mod 并理解玩法
 - 从源码或 jar 中梳理物品、方块、配方、世界生成、生物、维度、GUI、网络包、事件、mixin、配置
 - 输出模组简介、主要玩法、核心玩法循环、细粒度玩家流程、内容设计文档、攻略式玩法说明
-- 判断一个 mod “怎么玩”“主线是什么”“核心循环是什么”“代码里有哪些隐藏机制”
+- 判断一个 mod "怎么玩""主线是什么""核心循环是什么""代码里有哪些隐藏机制"
 
 不要把本 skill 用于普通 Java 代码重构、恶意篡改第三方 mod、绕过授权、提取商业资产再发布等任务。本 skill 默认只做静态分析和文档化。
 
@@ -35,7 +35,7 @@ description: "用于分析 Minecraft Mod / 模组 / mod jar / Forge / NeoForge /
 3. **不要只凭名称猜玩法。** 类名、物品名只能提供线索，必须结合注册、配方、事件、GUI、tooltip、advancement、worldgen 等证据验证。
 4. **数据驱动和代码驱动同等重要。** 很多玩法藏在 `data/`、`assets/`、`lang`、tags、recipes、loot tables、advancements、Patchouli/GuideMe 文档里，不只在 Java/Kotlin 类里。
 5. **把代码路径翻译成玩家路径。** 报告要解释玩家如何体验机制，而不是堆类名。
-6. **不确定就标注不确定。** 混淆、反编译失败、动态注册、跨 mod API 调用、配置分支、服务端/客户端差异，都要写入“不确定项与需实测项”。
+6. **不确定就标注不确定。** 混淆、反编译失败、动态注册、跨 mod API 调用、配置分支、服务端/客户端差异，都要写入"不确定项与需实测项"。
 7. **细粒度流程必须可复核。** 每条流程至少列出玩家动作、触发条件、关键代码/资源、产出结果、失败/限制条件。
 
 ## Requirements
@@ -90,33 +90,14 @@ python mod-analyzer-skill/scripts/inspect_mod_jar.py <path-to-mod.jar> -o output
 - GUI/texture/model/sound/particle 等资源
 - Patchouli、GuideMe 或其他内置手册内容
 
-这一阶段的目标是“知道从哪里开始读”，不是直接下结论。
+这一阶段的目标是"知道从哪里开始读"，不是直接下结论。
 
 ### 阶段 2：反编译或读取源码
 
 优先级：
 1. 如果用户提供源码，直接读源码，并用 jar 静态清单校验资源完整性。
-2. 如果只有 jar，尝试使用本地可用反编译器：Vineflower / CFR / FernFlower；JADX-GUI 不适用于 Java mod，优先级较低。可用辅助脚本：
-
-```bash
-python mod-analyzer-skill/scripts/decompile_mod_jar.py <path-to-mod.jar> -o output/mod-analysis/<modid-or-jar-name>/decompiled --decompiler-jar <path-to-cfr-or-vineflower.jar>
-```
-
-如果没有本地反编译器，且允许联网下载，优先使用 Vineflower：
-
-```bash
-python mod-analyzer-skill/scripts/decompile_mod_jar.py <path-to-mod.jar> -o output/mod-analysis/<modid-or-jar-name>/decompiled --download-decompiler vineflower
-```
-
-也可以改用 CFR：
-
-```bash
-python mod-analyzer-skill/scripts/decompile_mod_jar.py <path-to-mod.jar> -o output/mod-analysis/<modid-or-jar-name>/decompiled --download-decompiler cfr
-```
-
+2. 如果只有 jar，尝试使用本地可用反编译器：Vineflower / CFR / FernFlower。详细命令参考 `references/decompilation-workflow.md`。
 3. 如果不能下载反编译器或反编译失败，使用 `javap`、class 路径、资源文件、lang、recipes、mixin 先做不完整分析，并明确限制。
-
-读取 `references/decompilation-workflow.md` 获取具体命令和 loader 入口识别路径。
 
 反编译后优先定位：
 - 主 mod 类与初始化入口
@@ -126,7 +107,7 @@ python mod-analyzer-skill/scripts/decompile_mod_jar.py <path-to-mod.jar> -o outp
 - Config、gamerule、datapack reload listener
 - Mixin 注入点及其改变的原版行为
 
-### 阶段 3：建立“内容清单”而非“文件清单”
+### 阶段 3：建立"内容清单"而非"文件清单"
 
 把代码与资源归并成玩家可理解的内容模块。推荐表格：
 
@@ -140,7 +121,7 @@ python mod-analyzer-skill/scripts/decompile_mod_jar.py <path-to-mod.jar> -o outp
 
 ### 阶段 4：抽取核心玩法循环
 
-从“玩家反复做什么”而不是“mod 注册了什么”出发。至少输出：
+从"玩家反复做什么"而不是"mod 注册了什么"出发。至少输出：
 
 ```text
 触发/入口 → 资源获取 → 加工/交互 → 风险或限制 → 奖励/产出 → 解锁/升级 → 回到下一轮
@@ -154,7 +135,7 @@ python mod-analyzer-skill/scripts/decompile_mod_jar.py <path-to-mod.jar> -o outp
 - 奖励/产出：物品、能力、状态、世界变化、解锁 recipe、advancement
 - 回流：产物如何成为下一轮投入
 
-如果 mod 没有强循环，而是工具箱/装饰/辅助型，也要说明其“弱循环”或“使用场景循环”。
+如果 mod 没有强循环，而是工具箱/装饰/辅助型，也要说明其"弱循环"或"使用场景循环"。
 
 ### 阶段 5：细粒度流程追踪
 
@@ -182,7 +163,7 @@ python mod-analyzer-skill/scripts/decompile_mod_jar.py <path-to-mod.jar> -o outp
 
 ### 阶段 6：输出模组游戏内容文档
 
-最终报告默认使用 `references/report-template.md` 的结构。必须包含：
+最终报告使用 `references/report-template.md` 的结构。必须包含：
 - 模组简介
 - 基础信息与分析范围
 - 主要玩法总览
@@ -223,7 +204,7 @@ python mod-analyzer-skill/scripts/decompile_mod_jar.py <path-to-mod.jar> -o outp
 
 ### Mixin
 
-Mixin 往往定义“这个 mod 真正改变了什么”。必须记录：
+Mixin 往往定义"这个 mod 真正改变了什么"。必须记录：
 - mixin 配置文件路径
 - mixin 类名
 - target class
@@ -248,13 +229,13 @@ Mixin 往往定义“这个 mod 真正改变了什么”。必须记录：
 ## 输出语气
 
 - 默认中文，冷静、证据优先、面向玩家体验和内容设计。
-- 少写空洞赞美，少写“这个 mod 很有趣”这种不可复核判断。
-- 对不确定内容明确标注“推断”“未证实”“需要实测”。
+- 少写空洞赞美，少写"这个 mod 很有趣"这种不可复核判断。
+- 对不确定内容明确标注"推断""未证实""需要实测"。
 - 把类名、方法名、JSON 路径放在证据里，不要让正文变成代码索引。
 
 ## 子文档
 
 - `scripts/inspect_mod_jar.py`：jar 静态清单生成脚本
 - `scripts/decompile_mod_jar.py`：调用本地 CFR/Vineflower/FernFlower 反编译器的辅助脚本
-- `references/decompilation-workflow.md`：反编译与代码探查流程
+- `references/decompilation-workflow.md`：反编译与代码探查流程（含详细命令和 loader 入口识别路径）
 - `references/report-template.md`：最终内容文档模板
