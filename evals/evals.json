@@ -1,0 +1,23 @@
+{
+  "skill_name": "mod-analyzer-skill",
+  "evals": [
+    {
+      "id": 0,
+      "prompt": "我有一个 Fabric 1.20.1 的 mod jar：samples/arcane_tools-1.2.0.jar。请反编译并分析它到底怎么玩，输出完整的模组游戏内容文档，重点要有模组简介、主要玩法、核心玩法循环，以及至少 3 条细粒度玩家流程。",
+      "expected_output": "应先生成 jar 静态清单，再基于 fabric.mod.json、lang、recipes、entrypoints、mixin/代码证据输出中文内容文档。文档必须包含玩法模块表、核心循环链、3 条流程表、证据索引与不确定项。",
+      "files": []
+    },
+    {
+      "id": 1,
+      "prompt": "帮我分析这个 Forge/NeoForge 模组，jar 在 mods/deep_machines-0.8.4.jar，源码也在 external/deep-machines-src/。我想知道它的机器线怎么推进、玩家第一小时应该做什么、核心加工循环是否闭合。请写成模组游戏内容文档，而不是代码审计。",
+      "expected_output": "应优先读取源码并用 jar 静态清单校验资源，追踪 mods.toml、注册类、BlockEntity/Menu/RecipeSerializer、recipes、lang 和配置。输出机器线推进、玩家上手路径、核心加工循环、细粒度机器流程与代码/资源证据。",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "这个 mod jar 可能混淆过：samples/void_ruins.jar。请尽量分析它新增的世界生成、结构、战利品和隐藏事件机制。反编译失败也没关系，但报告里要明确哪些是证据、哪些是推断，最后给我一个完善的玩法内容文档。",
+      "expected_output": "应在反编译不完整时仍从 mod metadata、data/worldgen、structures、loot_tables、advancements、lang、mixin 和 class 常量建立内容框架。报告必须把低置信度结论与需实测项分开，并包含世界生成/结构探索流程。",
+      "files": []
+    }
+  ]
+}
