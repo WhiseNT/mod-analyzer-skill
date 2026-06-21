@@ -1,6 +1,6 @@
 ---
 name: mod-analyzer-skill
-description: "用于分析 Minecraft Mod / 模组 / mod jar / Forge / NeoForge / Fabric / Quilt 项目。用户要求反编译 jar、探查模组代码与资源、理解模组玩法、梳理物品方块机制、生成模组简介、主要玩法、核心玩法循环、细粒度流程或游戏内容文档时必须使用。该 skill 会先静态检查 jar，再按 loader 元数据、数据包资源、lang、recipe、registry、event、mixin、GUI、网络包与配置追踪证据，避免只凭类名猜测。不要把本 skill 用于普通 Java 代码重构、恶意篡改第三方 mod、绕过授权、提取商业资产再发布等任务。"
+description: "用于分析 Minecraft Mod / 模组 / mod jar / Forge / NeoForge / Fabric / Quilt 项目。用户要求反编译 jar、探查模组代码与资源、理解模组玩法、梳理物品方块机制、生成模组简介、主要玩法、核心玩法循环、细粒度流程或游戏内容文档时必须使用。该 skill 会先静态检查 jar，再按 loader 元数据、数据包资源、lang、recipe、registry、event、mixin、GUI、网络包与配置追踪证据，避免只凭类名猜测。此外还支持两种专项分析：模组设计分析（评价玩法循环、难度曲线、玩家引导的设计质量）和模组代码分析（面向开发/魔改的代码架构、mixin、事件、API、配置与魔改点梳理）。不要把本 skill 用于普通 Java 代码重构、恶意篡改第三方 mod、绕过授权、提取商业资产再发布等任务。"
 ---
 
 # Mod Analyzer Skill
@@ -15,6 +15,8 @@ description: "用于分析 Minecraft Mod / 模组 / mod jar / Forge / NeoForge /
 - 从源码或 jar 中梳理物品、方块、配方、世界生成、生物、维度、GUI、网络包、事件、mixin、配置
 - 输出模组简介、主要玩法、核心玩法循环、细粒度玩家流程、内容设计文档、攻略式玩法说明
 - 判断一个 mod "怎么玩""主线是什么""核心循环是什么""代码里有哪些隐藏机制"
+- 做模组设计分析（评价玩法循环、难度曲线、新手引导、内容组织的设计质量）
+- 做模组代码分析（面向开发/魔改：注册架构、mixin、事件、API、配置项、魔改点梳理）
 
 不要把本 skill 用于普通 Java 代码重构、恶意篡改第三方 mod、绕过授权、提取商业资产再发布等任务。本 skill 默认只做静态分析和文档化。
 
@@ -58,6 +60,18 @@ output/mod-analysis/<modid-or-jar-name>/
 ```
 
 如果用户只需要对话回答，也仍应按该结构组织内容，只是不落盘或少落盘。
+
+## 分析类型选择
+
+执行前先确认用户需要哪种输出类型：
+
+| 分析类型 | 输出产物 | 目标受众 | 核心问题 |
+|----------|----------|----------|----------|
+| **游戏内容文档**（默认） | `模组游戏内容文档-<mod-name>.md` | 玩家、策划 | 这个 mod 怎么玩？ |
+| **设计分析报告** | `模组设计分析报告-<mod-name>.md` | 策划、整合包作者 | 这个 mod 设计得好不好？ |
+| **代码分析报告** | `模组代码分析报告-<mod-name>.md` | 开发者、魔改作者 | 这个 mod 代码怎么组织的？怎么改？ |
+
+三种分析共享阶段 0~2（输入确认 + 静态清单 + 反编译/源码读取），阶段 3 开始分岔。如果用户没有明确指定，默认输出"游戏内容文档"。
 
 ## 工作流总览
 
@@ -176,6 +190,40 @@ python mod-analyzer-skill/scripts/inspect_mod_jar.py <path-to-mod.jar> -o output
 - 证据索引
 - 不确定项与需实测项
 
+### 分析类型分支：模组设计分析
+
+如果用户需要**模组设计分析**，在完成阶段 0~2 后，按照以下流程：
+
+1. **完成阶段 3~6 的基础内容清单和玩法循环**（这是设计判断的证据基础）
+2. **按 `references/design-analysis-template.md` 结构输出报告**
+3. 核心判断维度：
+   - 设计目标是什么？是否达成？
+   - 核心玩法循环是否完整、闭合、有反馈？
+   - 新手引导是否有效？是否存在黑箱机制？
+   - 内容组织是否有清晰的阶段划分？
+   - 难度曲线是否平滑？是否存在重复劳动/等待/黑箱成本？
+   - 跨 mod 兼容和整合包定制空间如何？
+4. 评分采用 80 分制（设计目标清晰度 10 + 核心循环完整性 15 + 新手引导 15 + 内容组织 10 + 难度平衡 10 + 整合包友好度 10 + 创新性 10）
+5. **所有评分必须有具体代码/资源证据支撑**，禁止无依据打分
+
+### 分析类型分支：模组代码分析
+
+如果用户需要**模组代码分析**，在完成阶段 0~2 后，按照以下流程：
+
+1. **完成阶段 1（静态清单）**，获取完整的 jar 清单和资源索引
+2. **完成阶段 2（反编译/源码读取）**，确保关键类可读
+3. 按 `references/code-analysis-template.md` 结构输出报告
+4. 核心梳理维度：
+   - 注册架构：DeferredRegister / Registry.register 如何组织？
+   - Mixin：注入点、目标、修改逻辑、兼容风险
+   - 事件系统：监听哪些事件？全局还是条件触发？
+   - 网络包：同步什么数据？CS 如何分工？
+   - 配置系统：哪些参数可调？默认值？
+   - 数据驱动：哪些可通过 datapack 修改？哪些硬编码？
+   - API/扩展点：是否提供公开 API？
+   - 魔改指导：KubeJS/CraftTweaker 示例、配置推荐、修改策略
+5. **报告面向开发者/魔改作者**，必须提供具体的魔改示例代码
+
 ## Loader 专项探查路径
 
 ### Forge / NeoForge
@@ -238,4 +286,6 @@ Mixin 往往定义"这个 mod 真正改变了什么"。必须记录：
 - `scripts/inspect_mod_jar.py`：jar 静态清单生成脚本
 - `scripts/decompile_mod_jar.py`：调用本地 CFR/Vineflower/FernFlower 反编译器的辅助脚本
 - `references/decompilation-workflow.md`：反编译与代码探查流程（含详细命令和 loader 入口识别路径）
-- `references/report-template.md`：最终内容文档模板
+- `references/report-template.md`：游戏内容文档模板
+- `references/design-analysis-template.md`：模组设计分析报告模板
+- `references/code-analysis-template.md`：模组代码分析报告模板
