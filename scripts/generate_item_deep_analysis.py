@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-模组物品深度分析生成器模板
+通用模组物品深度分析生成器模板
 Generate deep item analysis with recipes, functions, and system relationships.
 
 === 使用说明 ===
 此脚本是 mod-analyzer-skill 的"物品深度分析"工作流的参考实现。
-它为机械动力 (Create) 生成了包含配方、标签解析、功能描述和系统关系的
+它以通用模组分析为目标，生成包含配方、标签解析、功能描述和系统关系的
 结构化 JSON 物品数据库，供其他 LLM/AI 工具直接消费。
 
-=== 适配其他 Mod ===
-要适配其他 Mod，需要修改以下路径变量：
+=== 通用化说明 ===
+要适配任何 Mod，需要修改以下路径变量和规则：
 1. BASE → 指向目标 mod 的反编译输出目录
 2. RECIPES_DIR → 指向目标 mod 的 recipes 目录
 3. LANG_EN / LANG_ZH → 指向目标 mod 的语言文件
@@ -19,6 +19,7 @@ Generate deep item analysis with recipes, functions, and system relationships.
 6. functional_block_ids → 根据目标 mod 的功能方块更新
 7. OUTPUT → 输出路径
 8. generate_block_function() 内的方块特定描述 → 根据目标 mod 的方块机制更新
+9. 如存在魔改层，还要合并 kubejs / crafttweaker / 补丁脚本扫描结果
 
 === 核心流程 ===
 1. 加载语言文件 → 获取名称和 tooltip
@@ -38,11 +39,12 @@ import os
 import re
 from collections import defaultdict
 
-BASE = r'output/mod-analysis/create-1.20.1-6.0.8/decompiled'
-RECIPES_DIR = rf'{BASE}/data/create/recipes'
-LANG_EN = rf'{BASE}/assets/create/lang/en_us.json'
-LANG_ZH = rf'{BASE}/assets/create/lang/zh_cn.json'
-OUTPUT = r'output/extracted-data/机械动力-create-mod_deep_analysis.json'
+MODID = '<modid>'
+BASE = r'output/mod-analysis/<mod-name>/decompiled'
+RECIPES_DIR = rf'{BASE}/data/{MODID}/recipes'
+LANG_EN = rf'{BASE}/assets/{MODID}/lang/en_us.json'
+LANG_ZH = rf'{BASE}/assets/{MODID}/lang/zh_cn.json'
+OUTPUT = r'output/extracted-data/<mod-name>_items_deep.json'
 
 # ====== Load lang ======
 with open(LANG_EN, 'r', encoding='utf-8') as f:
@@ -75,8 +77,8 @@ def tooltip(prefix, item_id):
 
 # ====== Load tag system for resolving tag references ======
 print("Loading tag system...")
-TAG_ITEM_MAP = {}  # "forge:plates/brass" -> ["create:brass_sheet", ...]
-for tag_ns in ['forge', 'create', 'minecraft']:
+TAG_ITEM_MAP = {}  # "forge:plates/brass" -> ["examplemod:brass_sheet", ...]
+for tag_ns in ['forge', 'minecraft']:
     tag_dir = rf'{BASE}/data/{tag_ns}/tags/items'
     if os.path.isdir(tag_dir):
         for root, dirs, files in os.walk(tag_dir):
@@ -122,24 +124,24 @@ all_recipes = {}  # recipe_name -> recipe_data
 RECIPE_TYPE_MAP = {
     'crafting': 'crafting_table',
     'crafting/kinetics': 'mechanical_crafter',
-    'crushing': 'crushing_wheel',
-    'milling': 'millstone',
-    'compacting': 'mechanical_press_basin',
-    'mixing': 'mechanical_mixer_basin',
-    'pressing': 'mechanical_press',
-    'cutting': 'mechanical_saw',
+    'crushing': 'custom_processing',
+    'milling': 'custom_processing',
+    'compacting': 'custom_processing',
+    'mixing': 'custom_processing',
+    'pressing': 'custom_processing',
+    'cutting': 'custom_processing',
     'blasting': 'furnace_blast',
     'smelting': 'furnace',
     'smoking': 'smoker',
     'campfire_cooking': 'campfire',
-    'splashing': 'fan_splash',
-    'haunting': 'fan_haunt',
-    'sandpaper': 'sand_paper',
-    'deploying': 'deployer',
-    'filling': 'spout',
-    'emptying': 'item_drain',
+    'splashing': 'custom_processing',
+    'haunting': 'custom_processing',
+    'sandpaper': 'custom_processing',
+    'deploying': 'custom_processing',
+    'filling': 'custom_processing',
+    'emptying': 'custom_processing',
     'stonecutting': 'stonecutter',
-    'sequenced_assembly': 'sequenced_assembly',
+    'sequenced_assembly': 'custom_processing',
 }
 
 def extract_item_id(item_str):
@@ -266,8 +268,8 @@ for root, dirs, files in os.walk(RECIPES_DIR):
         rname = rel_path.replace('.json', '')
         all_recipes[rname] = recipe_info
 
-        # Build indexes - only index create: items
-        # Also resolve tag references to find create: items
+        # Build indexes - index items that belong to the target mod namespace
+        # Also resolve tag references to find namespaced items
         resolved_inputs = []
         for inp in inputs:
             if inp.startswith('create:'):
@@ -299,8 +301,24 @@ print(f"  Parsed {len(all_recipes)} recipes")
 print(f"  Items with recipes: {len(recipe_output_index)}")
 print(f"  Items used as material: {len(recipe_input_index)}")
 
-# ====== Step 2: Define item/block registry info from code ======
-print("Step 2: Building item registry info...")
+# ====== Step 2: Pre-analyze key mod settings ======
+print("Step 2: Pre-analyzing key mod settings...")
+
+IMPORTANT_SETTINGS = {
+    'core_resources': [],
+    'core_systems': [],
+    'progression_stages': [],
+    'special_rules': [],
+    'key_terms': [],
+    'important_blocks': [],
+    'important_items': [],
+    'important_recipes': [],
+}
+
+# 先从源码、注册类、语言文件和关键数据中识别这个模组的重要设定，
+# 再把这些设定作为后续物品/方块/配方分析的统一上下文。
+# 例如：核心资源链、主机器链、特殊交互规则、阶段门槛、专有概念、
+# 对玩家影响最大的限制条件等。
 
 # Item categories based on AllItems.java analysis
 ITEM_CLASS_MAP = {
@@ -572,11 +590,11 @@ def get_item_category(item_id, prefix='item'):
     return '未知'
 
 def generate_item_function(item_id):
-    """Generate function description for items"""
+    """Generate function description for items, using IMPORTANT_SETTINGS as context""
     cat = get_item_category(item_id, 'item')
-    name = lang_name('item.create', item_id)
-    name_zh = lang_zh('item.create', item_id)
-    tip = tooltip('item.create', item_id)
+    name = lang_name(f'item.{MODID}', item_id)
+    name_zh = lang_zh(f'item.{MODID}', item_id)
+    tip = tooltip(f'item.{MODID}', item_id)
     summary = tip['summary_en'] + ' | ' + tip['summary_zh']
     behaviours = tip['behaviours']
     
@@ -594,19 +612,19 @@ def generate_item_function(item_id):
 
     # Generate description based on category
     if cat == '材料':
-        desc = f'{name}（{name_zh}）是机械动力的基础材料'
+        desc = f'{name}（{name_zh}）是该模组的基础材料'
         if used_in:
             used_names = set()
             for r in used_in[:10]:
                 for o in r['outputs'][:3]:
-                    if o.startswith('create:') and o != f'create:{item_id}':
-                        used_names.add(lang_name('item.create', o.replace('create:', '')))
+                    if ':' in o and o != f'{MODID}:{item_id}':
+                        used_names.add(lang_name(f'item.{MODID}', o.split(':', 1)[1]))
             if used_names:
                 desc += f'，用于合成：{", ".join(sorted(used_names)[:8])}'
         desc += '。'
     
     elif cat == '半成品':
-        desc = f'{name}（{name_zh}）是序列组装过程中的中间产物，不能直接合成，需要通过序列组装流水线加工得到。'
+        desc = f'{name}（{name_zh}）是该模组的中间产物，通常不能直接作为终端物品使用，需要通过专门流程加工得到。'
         if obtain_recipes:
             machines = ', '.join(sorted(set(r['machine'] for r in obtain_recipes)))
             desc += f' 可通过 {machines} 获得。'

@@ -17,7 +17,7 @@ description: "用于分析 Minecraft Mod / 模组 / mod jar / Forge / NeoForge /
 - 判断一个 mod "怎么玩""主线是什么""核心循环是什么""代码里有哪些隐藏机制"
 - 做模组设计分析（评价玩法循环、难度曲线、新手引导、内容组织的设计质量）
 - 做模组代码分析（面向开发/魔改：注册架构、mixin、事件、API、配置项、魔改点梳理）
-- 做物品深度分析（为 LLM/AI 工具生成结构化的 JSON 物品数据库，包含配方、功能描述、系统关系）
+- 做物品深度分析（为 LLM/AI 工具生成结构化的 JSON 物品数据库，包含配方、功能描述、系统关系；适用于任何 mod，不限定某个特定模组）
 - 对带有魔改的模组进行联合分析：先扫描 KubeJS / CraftTweaker / 其他补丁脚本，再把相关修改纳入分析范围
 
 不要把本 skill 用于普通 Java 代码重构、恶意篡改第三方 mod、绕过授权、提取商业资产再发布等任务。本 skill 默认只做静态分析和文档化。
@@ -246,29 +246,33 @@ python mod-analyzer-skill/scripts/inspect_mod_jar.py <path-to-mod.jar> -o output
 
 如果用户需要**物品深度分析**（为 LLM/AI 工具生成结构化的 JSON 物品数据库），在完成阶段 0~2 后，按照以下流程：
 
-1. **完成阶段 1（静态清单）和阶段 2（反编译/源码读取）**，确保 lang 文件和配方数据可用；如果存在魔改层，则先扫描并合并相关 KubeJS / CraftTweaker 文件
-2. **提取物品和方块清单**：
+1. **先做简要预分析，再进入物品/方块明细分析。**
+   - 先阅读主 mod 类、注册入口、关键数据文件、语言文件、配方入口与系统性工具类
+   - 先识别这个 mod 的重要设定：例如核心资源、核心机器链、核心限制、主要进度阶段、特殊规则、专有名词体系、关键交互方式
+   - 在后续所有物品/方块分析中，把这些重要设定作为上下文统一纳入判断，避免只按单个物品孤立解释
+2. **完成阶段 1（静态清单）和阶段 2（反编译/源码读取）**，确保 lang 文件和配方数据可用；如果存在魔改层，则先扫描并合并相关 KubeJS / CraftTweaker 文件
+3. **提取物品和方块清单**：
    - 从 `assets/<modid>/lang/en_us.json` 提取所有 `item.<modid>.xxx` 和 `block.<modid>.xxx` 键
    - 从 `assets/<modid>/lang/zh_cn.json`（或其他中文 lang）获取中文名称
    - 从 `assets/<modid>/lang/en_us.json` 提取每个物品的 tooltip（`tooltip.summary` 和 `tooltip.behaviour/condition`）
-3. **解析所有配方文件**（`data/<modid>/recipes/`）：
+4. **解析所有配方文件**（`data/<modid>/recipes/`）：
    - 遍历所有 JSON 配方，提取输入物品和输出物品
    - 识别配方类型（crafting_shaped/shapeless、create:crushing、create:mixing 等），映射到对应机器
    - 建立双向索引：`产出物品 → 配方列表`（用于 how_to_obtain）和 `消耗物品 → 配方列表`（用于 used_in_recipes）
-4. **加载标签系统**（`data/<modid>/tags/items/` 及 `data/forge/tags/items/`）：
+5. **加载标签系统**（`data/<modid>/tags/items/` 及 `data/forge/tags/items/`）：
    - 建立 `tag_id → [物品列表]` 的映射
    - 用标签解析配方中的 tag 引用（如 `#forge:plates/brass` → `create:brass_sheet`）
    - 递归解析嵌套标签引用
-5. **生成物品功能描述**：
+6. **生成物品功能描述**：
    - 读取注册源码（如 `AllItems.java`、`AllBlocks.java`），获取每个物品的 Java 类名、稀有度、分类
    - 对基础材料：说明用途（基于 used_in_recipes 列出被用于合成什么）
    - 对工具/装备：结合 tooltip behaviours 生成详细用法说明
    - 对机器方块：基于其处理的配方类型和输入输出关系，说明工作机制
    - 对半成品：说明在什么流程中使用
-6. **构建系统关系图**：
+7. **构建系统关系图**：
    - 将物品/方块按子系统分组（动力系统、流体系统、物品运输系统、加工系统、动态结构系统、铁路系统等）
    - 为每个子系统编写描述和核心流程
-7. **输出 JSON 数据库**：
+8. **输出 JSON 数据库**：
    - 输出到 `output/extracted-data/<modid>_items_deep.json`
    - 每条条目包含：type、name_en、name_zh、category、rarity、tooltip、how_to_obtain（按机器分组的配方）、used_in_recipes（使用此物品的配方）、function（详细功能描述）
    - 顶层包含：mod_info、systems（子系统定义）、total_entries、entries
