@@ -37,20 +37,45 @@ Generate deep item analysis with recipes, functions, and system relationships.
 import json
 import os
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 
-MODID = '<modid>'
-BASE = r'output/mod-analysis/<mod-name>/decompiled'
-RECIPES_DIR = rf'{BASE}/data/{MODID}/recipes'
-LANG_EN = rf'{BASE}/assets/{MODID}/lang/en_us.json'
-LANG_ZH = rf'{BASE}/assets/{MODID}/lang/zh_cn.json'
-OUTPUT = r'output/extracted-data/<mod-name>_items_deep.json'
+MODID = os.environ.get('MODID', '<modid>')
+BASE = os.environ.get('BASE', r'output/mod-analysis/<mod-name>/decompiled')
+RECIPES_DIR = os.environ.get('RECIPES_DIR', rf'{BASE}/data/{MODID}/recipes')
+LANG_EN = os.environ.get('LANG_EN', rf'{BASE}/assets/{MODID}/lang/en_us.json')
+LANG_ZH = os.environ.get('LANG_ZH', rf'{BASE}/assets/{MODID}/lang/zh_cn.json')
+OUTPUT = os.environ.get('OUTPUT', r'output/extracted-data/<mod-name>_items_deep.json')
+SCRIPT_SCAN_DIRS = [p.strip() for p in os.environ.get('SCRIPT_SCAN_DIRS', '').split(';') if p.strip()]
+SOURCE_SCAN_ROOT = os.environ.get('SOURCE_SCAN_ROOT', BASE)
 
 # ====== Load lang ======
 with open(LANG_EN, 'r', encoding='utf-8') as f:
     LANG_EN_DATA = json.load(f)
 with open(LANG_ZH, 'r', encoding='utf-8') as f:
     LANG_ZH_DATA = json.load(f)
+
+
+def collect_namespaced_keys(data, prefix):
+    ids = []
+    head = f'{prefix}.{MODID}.'
+    for key in data:
+        if key.startswith(head) and key.count('.') == 2:
+            ids.append(key[len(head):])
+    return sorted(set(ids))
+
+
+def normalize_label(text):
+    if not text:
+        return ''
+    return re.sub(r'\s+', ' ', str(text)).strip()
+
+
+def derive_tokens(text):
+    text = normalize_label(text)
+    if not text:
+        return []
+    tokens = re.findall(r'[A-Za-z][A-Za-z0-9_\-]{2,}', text)
+    return [t.lower() for t in tokens if len(t) >= 3]
 
 def lang_name(prefix, item_id):
     return LANG_EN_DATA.get(f'{prefix}.{item_id}', '')
@@ -78,7 +103,7 @@ def tooltip(prefix, item_id):
 # ====== Load tag system for resolving tag references ======
 print("Loading tag system...")
 TAG_ITEM_MAP = {}  # "forge:plates/brass" -> ["examplemod:brass_sheet", ...]
-for tag_ns in ['forge', 'minecraft']:
+for tag_ns in ['forge', 'minecraft', MODID]:
     tag_dir = rf'{BASE}/data/{tag_ns}/tags/items'
     if os.path.isdir(tag_dir):
         for root, dirs, files in os.walk(tag_dir):
@@ -122,6 +147,10 @@ recipe_machine_index = defaultdict(list)  # machine item_id -> recipes it proces
 all_recipes = {}  # recipe_name -> recipe_data
 
 RECIPE_TYPE_MAP = {
+    # ========== 示例模板数据 ==========
+    # 用户替换 MODID 后，需要根据目标 mod 的 recipe type 重新映射：
+    # 键是 recipe 子目录名或 recipe type 的 namespace 名，
+    # 值是"输出 JSON 中的 machine 字段名"（会用于 how_to_obtain 分组）
     'crafting': 'crafting_table',
     'crafting/kinetics': 'mechanical_crafter',
     'crushing': 'custom_processing',
@@ -258,7 +287,7 @@ for root, dirs, files in os.walk(RECIPES_DIR):
                     outputs.append(r.get('item', ''))
 
         recipe_info = {
-            'recipe_id': f"create:{rel_path.replace('.json', '')}",
+            'recipe_id': f"{MODID}:{rel_path.replace('.json', '')}",
             'type': recipe_type,
             'machine': machine,
             'inputs': inputs,
@@ -272,7 +301,7 @@ for root, dirs, files in os.walk(RECIPES_DIR):
         # Also resolve tag references to find namespaced items
         resolved_inputs = []
         for inp in inputs:
-            if inp.startswith('create:'):
+            if inp.startswith(f'{MODID}:'):
                 resolved_inputs.append(inp)
             elif inp.startswith('#'):
                 resolved = resolve_tag(inp[1:])
@@ -281,20 +310,20 @@ for root, dirs, files in os.walk(RECIPES_DIR):
                 resolved_inputs.append(inp)
 
         for out in outputs:
-            if out.startswith('create:'):
-                oid = out.replace('create:', '')
+            if out.startswith(f'{MODID}:'):
+                oid = out.replace(f'{MODID}:', '')
                 recipe_output_index[oid].append(recipe_info)
 
         for inp in resolved_inputs:
-            if inp.startswith('create:'):
-                iid = inp.replace('create:', '')
+            if inp.startswith(f'{MODID}:'):
+                iid = inp.replace(f'{MODID}:', '')
                 recipe_input_index[iid].append(recipe_info)
 
         # Build machine index
         if machine not in ('crafting_table', 'stonecutter', 'furnace', 'furnace_blast', 'smoker', 'campfire'):
             for inp in inputs:
-                if inp.startswith('create:'):
-                    iid = inp.replace('create:', '')
+                if inp.startswith(f'{MODID}:'):
+                    iid = inp.replace(f'{MODID}:', '')
                     recipe_machine_index[iid].append(recipe_info)
 
 print(f"  Parsed {len(all_recipes)} recipes")
@@ -313,14 +342,154 @@ IMPORTANT_SETTINGS = {
     'important_blocks': [],
     'important_items': [],
     'important_recipes': [],
+    'evidence': {
+        'lang': [],
+        'recipes': [],
+        'source': [],
+        'scripts': [],
+    },
 }
 
-# 先从源码、注册类、语言文件和关键数据中识别这个模组的重要设定，
-# 再把这些设定作为后续物品/方块/配方分析的统一上下文。
-# 例如：核心资源链、主机器链、特殊交互规则、阶段门槛、专有概念、
-# 对玩家影响最大的限制条件等。
 
-# Item categories based on AllItems.java analysis
+def add_unique(bucket, value):
+    value = normalize_label(value)
+    if value and value not in bucket:
+        bucket.append(value)
+
+
+def scan_source_text_for_settings(text, label):
+    if not text:
+        return
+    lower = text.lower()
+    tokens = derive_tokens(text)
+    for token in tokens[:40]:
+        if token not in IMPORTANT_SETTINGS['key_terms']:
+            IMPORTANT_SETTINGS['key_terms'].append(token)
+    heuristics = [
+        ('energy', '能量系统'),
+        ('stress', '应力系统'),
+        ('kinetic', '动能系统'),
+        ('contraption', '动态结构'),
+        ('fluid', '流体系统'),
+        ('recipe', '配方系统'),
+        ('registry', '注册系统'),
+        ('mixin', 'Mixin 修改点'),
+        ('progression', '进度阶段'),
+        ('gating', '阶段门槛'),
+        ('automation', '自动化'),
+        ('transport', '运输系统'),
+        ('tag', '标签系统'),
+        ('tooltip', '说明文本系统'),
+        ('event', '事件系统'),
+        ('config', '配置系统'),
+    ]
+    for needle, item in heuristics:
+        if needle in lower:
+            add_unique(IMPORTANT_SETTINGS['core_systems'], item)
+    for label_text in ['core', 'main', 'primary', 'special', 'advanced', 'tier', 'stage']:
+        if label_text in lower:
+            add_unique(IMPORTANT_SETTINGS['special_rules'], f'{label} contains {label_text}')
+
+
+def scan_lang_for_settings():
+    for key, value in LANG_EN_DATA.items():
+        if not key.startswith(f'item.{MODID}.') and not key.startswith(f'block.{MODID}.'):
+            continue
+        if any(s in key for s in ['tooltip.summary', 'tooltip.behaviour', 'tooltip.condition']):
+            scan_source_text_for_settings(str(value), key)
+        if key.endswith('.name') or key.count('.') == 2:
+            add_unique(IMPORTANT_SETTINGS['important_items'] if key.startswith(f'item.{MODID}.') else IMPORTANT_SETTINGS['important_blocks'], key.rsplit('.', 1)[-1])
+            if isinstance(value, str):
+                if len(value) >= 8:
+                    add_unique(IMPORTANT_SETTINGS['key_terms'], value)
+
+
+def scan_recipes_for_settings():
+    recipe_counter = Counter()
+    output_counter = Counter()
+    input_counter = Counter()
+    for recipe in all_recipes.values():
+        recipe_counter[recipe['machine']] += 1
+        for out in recipe.get('outputs', []):
+            if isinstance(out, str) and out.startswith(f'{MODID}:'):
+                output_counter[out.split(':', 1)[1]] += 1
+        for inp in recipe.get('inputs', []):
+            if isinstance(inp, str) and inp.startswith(f'{MODID}:'):
+                input_counter[inp.split(':', 1)[1]] += 1
+    for item_id, count in output_counter.most_common(25):
+        add_unique(IMPORTANT_SETTINGS['important_items'], item_id)
+        if count >= 2:
+            add_unique(IMPORTANT_SETTINGS['core_resources'], item_id)
+    for item_id, count in input_counter.most_common(20):
+        if count >= 2:
+            add_unique(IMPORTANT_SETTINGS['core_resources'], item_id)
+    for machine, count in recipe_counter.most_common(20):
+        add_unique(IMPORTANT_SETTINGS['core_systems'], machine)
+
+
+def scan_scripts_for_settings():
+    for root_dir in SCRIPT_SCAN_DIRS:
+        if not os.path.isdir(root_dir):
+            continue
+        for root, _, files in os.walk(root_dir):
+            for fname in files:
+                if not fname.endswith(('.js', '.ts', '.json', '.zs', '.txt', '.mcfunction')):
+                    continue
+                fpath = os.path.join(root, fname)
+                try:
+                    with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
+                        text = f.read()
+                except OSError:
+                    continue
+                low = text.lower()
+                if MODID.lower() not in low and not any(k in low for k in ['kubejs', 'crafttweaker', 'craftweak', 'recipe', 'event', 'tag', 'registry']):
+                    continue
+                IMPORTANT_SETTINGS['evidence']['scripts'].append(fpath)
+                scan_source_text_for_settings(text, fpath)
+                for pattern, bucket in [
+                    (rf'{re.escape(MODID)}:[a-z0-9_./-]+', IMPORTANT_SETTINGS['important_items']),
+                    (r'recipe[_\- ]id[:= ]+[A-Za-z0-9_:\./\-]+', IMPORTANT_SETTINGS['important_recipes']),
+                ]:
+                    for match in re.findall(pattern, text, flags=re.I):
+                        add_unique(bucket, match)
+
+
+def scan_source_for_settings():
+    if not os.path.isdir(SOURCE_SCAN_ROOT):
+        return
+    for root, _, files in os.walk(SOURCE_SCAN_ROOT):
+        for fname in files:
+            if not fname.endswith(('.java', '.kt', '.json', '.mcmeta', '.toml', '.mixins.json', '.cfg')):
+                continue
+            fpath = os.path.join(root, fname)
+            try:
+                with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
+                    text = f.read()
+            except OSError:
+                continue
+            if MODID.lower() not in text.lower() and not any(token in text.lower() for token in ['registry', 'mixin', 'recipe', 'tooltip', 'tag', 'event', 'config']):
+                continue
+            IMPORTANT_SETTINGS['evidence']['source'].append(fpath)
+            scan_source_text_for_settings(text, fpath)
+            for match in re.findall(rf'{re.escape(MODID)}:[a-z0-9_./-]+', text, flags=re.I):
+                add_unique(IMPORTANT_SETTINGS['important_items'], match.split(':', 1)[1])
+            for match in re.findall(r'block\.' + re.escape(MODID) + r'\.[A-Za-z0-9_./-]+', text, flags=re.I):
+                add_unique(IMPORTANT_SETTINGS['important_blocks'], match.rsplit('.', 1)[-1])
+
+
+scan_lang_for_settings()
+scan_source_for_settings()
+scan_scripts_for_settings()
+scan_recipes_for_settings()
+
+print("Pre-analysis summary:")
+print(f"  core_resources={len(IMPORTANT_SETTINGS['core_resources'])}")
+print(f"  core_systems={len(IMPORTANT_SETTINGS['core_systems'])}")
+print(f"  key_terms={len(IMPORTANT_SETTINGS['key_terms'])}")
+print(f"  important_items={len(IMPORTANT_SETTINGS['important_items'])}")
+print(f"  important_blocks={len(IMPORTANT_SETTINGS['important_blocks'])}")
+
+# Item categories based on registry/source analysis
 ITEM_CLASS_MAP = {
     # Basic materials
     'andesite_alloy': {'class': 'Item', 'category': '材料'},
@@ -424,6 +593,9 @@ ITEM_CLASS_MAP = {
 print("Step 3: Building system relationships...")
 
 SYSTEMS = {
+    # ========== 示例模板数据 ==========
+    # 以下 SYSTEMS 包含 Create 机械动力的系统定义。
+    # 适配其他 mod 时请根据该 mod 的实际子系统结构替换全部内容。
     '动力系统': {
         'description': '机械动力的核心系统。所有机器需要旋转动力（Kinetic Energy）才能工作。动力源产生旋转速度（RPM）和应力（Stress Units, SU）。传动组件传递、改变方向和转速。加工机器消耗应力来执行工作。当消耗超过产能时网络会过载停转。',
         'core_flow': '动力源 → 传动杆/齿轮/齿轮箱 → 转速/应力调节 → 加工机器',
@@ -590,13 +762,19 @@ def get_item_category(item_id, prefix='item'):
     return '未知'
 
 def generate_item_function(item_id):
-    """Generate function description for items, using IMPORTANT_SETTINGS as context""
+    """Generate function description for items, using IMPORTANT_SETTINGS as context"""
     cat = get_item_category(item_id, 'item')
     name = lang_name(f'item.{MODID}', item_id)
     name_zh = lang_zh(f'item.{MODID}', item_id)
     tip = tooltip(f'item.{MODID}', item_id)
     summary = tip['summary_en'] + ' | ' + tip['summary_zh']
     behaviours = tip['behaviours']
+    context_bits = []
+    for bucket in ('core_resources', 'core_systems', 'progression_stages', 'special_rules'):
+        context_bits.extend(IMPORTANT_SETTINGS.get(bucket, [])[:3])
+    context_tail = ''
+    if context_bits:
+        context_tail = '；结合重要设定：' + '、'.join(list(dict.fromkeys(context_bits))[:6])
     
     # Used in recipes
     used_in = recipe_input_index.get(item_id, [])
@@ -620,17 +798,18 @@ def generate_item_function(item_id):
                     if ':' in o and o != f'{MODID}:{item_id}':
                         used_names.add(lang_name(f'item.{MODID}', o.split(':', 1)[1]))
             if used_names:
-                desc += f'，用于合成：{", ".join(sorted(used_names)[:8])}'
-        desc += '。'
+                desc += f'，用于合成：{", ".join(sorted([x for x in used_names if x])[:8])}'
+        desc += context_tail + '。'
     
     elif cat == '半成品':
         desc = f'{name}（{name_zh}）是该模组的中间产物，通常不能直接作为终端物品使用，需要通过专门流程加工得到。'
         if obtain_recipes:
             machines = ', '.join(sorted(set(r['machine'] for r in obtain_recipes)))
             desc += f' 可通过 {machines} 获得。'
+        desc += context_tail
     
     elif cat == '工具':
-        desc = f'{name}（{name_zh}）是机械动力的工具。'
+        desc = f'{name}（{name_zh}）是该模组的工具。'
         if summary:
             desc += f' {summary}'
         if behaviours:
@@ -683,9 +862,9 @@ def generate_item_function(item_id):
 
 def generate_block_function(block_id):
     """Generate function description for blocks"""
-    name = lang_name('block.create', block_id)
-    name_zh = lang_zh('block.create', block_id)
-    tip = tooltip('block.create', block_id)
+    name = lang_name(f'block.{MODID}', block_id)
+    name_zh = lang_zh(f'block.{MODID}', block_id)
+    tip = tooltip(f'block.{MODID}', block_id)
     summary = tip['summary_en'] + ' | ' + tip['summary_zh']
     behaviours = tip['behaviours']
 
@@ -714,7 +893,7 @@ def generate_block_function(block_id):
         if r['machine'] not in ('crafting_table',):
             for inp in r['inputs']:
                 for out in r['outputs']:
-                    if out.startswith('create:'):
+                    if ':' in out and out.split(':', 1)[0] == MODID:
                         io_pairs.append((inp, out))
 
     desc = f'{name}（{name_zh}）'
@@ -733,6 +912,9 @@ def generate_block_function(block_id):
                 desc += f' {cond}：{beh}'
 
     # Add machine-specific descriptions
+    # ========== 示例模板数据开始 ==========
+    # 以下 elif 链包含 Create 机械动力专属的方块描述。
+    # 适配其他 mod 时请根据目标 mod 的方块机制替换全部内容。
     if block_id == 'shaft':
         desc += ' 传动杆是最基础的动力传输组件，沿一个轴向传递旋转动力。多个传动杆可首尾相连延长。'
     elif block_id == 'cogwheel':
@@ -926,6 +1108,7 @@ def generate_block_function(block_id):
     elif block_id == 'experience_block':
         desc += ' 经验块是经验颗粒的存储方块，发出 15 级亮度。'
 
+    # ========== 示例模板数据结束 ==========
     return desc.strip()
 
 # ====== Step 5: Build output ======
@@ -936,13 +1119,13 @@ entries = {}
 # Process items
 item_ids = set()
 for k in LANG_EN_DATA:
-    if k.startswith('item.create.') and '.' not in k[len('item.create.'):]:
-        item_ids.add(k.replace('item.create.', ''))
+    if k.startswith(f'item.{MODID}.') and '.' not in k[len(f'item.{MODID}.'):]:
+        item_ids.add(k.replace(f'item.{MODID}.', ''))
 
 for item_id in sorted(item_ids):
-    name_en = lang_name('item.create', item_id)
-    name_zh = lang_zh('item.create', item_id)
-    tip = tooltip('item.create', item_id)
+    name_en = lang_name(f'item.{MODID}', item_id)
+    name_zh = lang_zh(f'item.{MODID}', item_id)
+    tip = tooltip(f'item.{MODID}', item_id)
     cat = get_item_category(item_id, 'item')
 
     obtain_recipes = recipe_output_index.get(item_id, [])
@@ -972,7 +1155,7 @@ for item_id in sorted(item_ids):
             'outputs': r['outputs'][:3],
         })
 
-    entries[f'create:{item_id}'] = {
+    entries[f'{MODID}:{item_id}'] = {
         'type': 'item',
         'name_en': name_en,
         'name_zh': name_zh,
@@ -986,6 +1169,9 @@ for item_id in sorted(item_ids):
 
 # Process blocks (only functional ones - skip pure decorative stone variants)
 functional_block_ids = [
+    # ========== 示例模板数据 ==========
+    # 以下 functional_block_ids 是 Create 机械动力的功能方块列表。
+    # 适配其他 mod 时请根据该 mod 的实际功能方块替换全部内容。
     # Kinetic core
     'shaft', 'cogwheel', 'large_cogwheel', 'gearbox', 'vertical_gearbox',
     'belt', 'encased_chain_drive', 'chain_conveyor',
@@ -1105,16 +1291,17 @@ functional_block_ids.append('seat')
 functional_block_ids.append('toolbox')
 
 for block_id in functional_block_ids:
-    key = f'block.create.{block_id}'
+    key = f'block.{MODID}.{block_id}'
     if key not in LANG_EN_DATA:
         continue
     
-    name_en = lang_name('block.create', block_id)
-    name_zh = lang_zh('block.create', block_id)
-    tip = tooltip('block.create', block_id)
+    name_en = lang_name(f'block.{MODID}', block_id)
+    name_zh = lang_zh(f'block.{MODID}', block_id)
+    tip = tooltip(f'block.{MODID}', block_id)
 
     # Check if it's a kinetic block (has stress impact)
     is_kinetic = block_id in [
+        # ========== 示例模板数据 ==========
         'shaft', 'cogwheel', 'large_cogwheel', 'gearbox', 'vertical_gearbox',
         'belt', 'encased_chain_drive', 'chain_conveyor',
         'adjustable_chain_gearshift', 'gearshift', 'sequenced_gearshift',
@@ -1156,7 +1343,7 @@ for block_id in functional_block_ids:
             'outputs': r['outputs'][:3],
         })
 
-    entries[f'create:{block_id}'] = {
+    entries[f'{MODID}:{block_id}'] = {
         'type': 'block',
         'name_en': name_en,
         'name_zh': name_zh,
@@ -1170,14 +1357,15 @@ for block_id in functional_block_ids:
 # Build output
 output = {
     'mod_info': {
-        'name': 'Create',
-        'id': 'create',
-        'version': '6.0.8',
-        'mc_version': '1.20.1',
-        'loader': 'Forge',
-        'description': 'Create is a vanilla-style mechanical engineering mod. Core mechanic: rotational power (kinetic energy) for automation and contraptions.',
-        'description_zh': '机械动力是一个原版风格的机械工程模组，以旋转动力（动能）为核心，强调自动化、动态结构建造和多步骤物品处理。',
+        'name': MODID,
+        'id': MODID,
+        'version': os.environ.get('MOD_VERSION', 'unknown'),
+        'mc_version': os.environ.get('MC_VERSION', 'unknown'),
+        'loader': os.environ.get('MOD_LOADER', 'unknown'),
+        'description': f'{MODID} mod item database generated by mod-analyzer-skill.',
+        'description_zh': f'{MODID} 模组物品深度分析数据库。',
     },
+    'important_settings': IMPORTANT_SETTINGS,
     'systems': SYSTEMS,
     'total_entries': len(entries),
     'entries': entries,
