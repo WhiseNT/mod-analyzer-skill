@@ -1,6 +1,6 @@
 ---
 name: mod-analyzer-skill
-description: "用于分析 Minecraft Mod / 模组 / mod jar / Forge / NeoForge / Fabric / Quilt 项目。用户要求反编译 jar、探查模组代码与资源、理解模组玩法、梳理物品方块机制、生成模组简介、主要玩法、核心玩法循环、细粒度流程或游戏内容文档时必须使用。该 skill 会先静态检查 jar，再按 loader 元数据、数据包资源、lang、recipe、registry、event、mixin、GUI、网络包与配置追踪证据，避免只凭类名猜测。此外还支持三种专项分析：模组设计分析（评价玩法循环、难度曲线、玩家引导的设计质量）、模组代码分析（面向开发/魔改的代码架构、mixin、事件、API、配置与魔改点梳理）以及物品深度分析（面向 LLM/AI 工具的 JSON 结构化物品数据库，含配方、标签、功能描述和系统关系）。不要把本 skill 用于普通 Java 代码重构、恶意篡改第三方 mod、绕过授权、提取商业资产再发布等任务。"
+description: "用于分析 Minecraft Mod / 模组 / mod jar / Forge / NeoForge / Fabric / Quilt 项目。用户要求反编译 jar、探查模组代码与资源、理解模组玩法、梳理物品方块机制、生成模组简介、主要玩法、核心玩法循环、细粒度流程或游戏内容文档时必须使用。该 skill 会先静态检查 jar，再按 loader 元数据、数据包资源、lang、recipe、registry、event、mixin、GUI、网络包与配置追踪证据，避免只凭类名猜测；如果存在 KubeJS / CraftTweaker 等魔改层，还会先扫描并纳入相关脚本与补丁文件。除此之外还支持三种专项分析：模组设计分析（评价玩法循环、难度曲线、玩家引导的设计质量）、模组代码分析（面向开发/魔改的代码架构、mixin、事件、API、配置与魔改点梳理）以及物品深度分析（面向 LLM/AI 工具的 JSON 结构化物品数据库，含配方、标签、功能描述和系统关系）。不要把本 skill 用于普通 Java 代码重构、恶意篡改第三方 mod、绕过授权、提取商业资产再发布等任务。"
 ---
 
 # Mod Analyzer Skill
@@ -18,6 +18,7 @@ description: "用于分析 Minecraft Mod / 模组 / mod jar / Forge / NeoForge /
 - 做模组设计分析（评价玩法循环、难度曲线、新手引导、内容组织的设计质量）
 - 做模组代码分析（面向开发/魔改：注册架构、mixin、事件、API、配置项、魔改点梳理）
 - 做物品深度分析（为 LLM/AI 工具生成结构化的 JSON 物品数据库，包含配方、功能描述、系统关系）
+- 对带有魔改的模组进行联合分析：先扫描 KubeJS / CraftTweaker / 其他补丁脚本，再把相关修改纳入分析范围
 
 不要把本 skill 用于普通 Java 代码重构、恶意篡改第三方 mod、绕过授权、提取商业资产再发布等任务。本 skill 默认只做静态分析和文档化。
 
@@ -85,6 +86,18 @@ output/mod-analysis/<modid-or-jar-name>/
 - Minecraft 版本、loader、mod 版本
 - 是否有依赖 mod、整合包上下文、配置文件
 - 用户需要的输出深度：快速简介、完整内容文档、机制追踪、面向玩家攻略、面向策划拆解
+- 是否存在魔改层：纯分析模组 jar，还是分析包含 KubeJS / CraftTweaker / 其他脚本魔改的整合环境
+
+若存在魔改层，必须在开始分析前继续确认：
+- kubejs / crafttweaker / 相关脚本根目录路径
+- 需要纳入分析的魔改文件路径（用户提供的脚本目录或文件列表）
+- 是否允许递归扫描该目录下与目标 mod 相关的脚本、配方、事件与补丁文件
+
+建议在正式分析前直接问用户：
+1. 这是“纯分析模组 jar”，还是“分析带有魔改的模组环境”？
+2. 如果是魔改环境，请提供 kubejs / crafttweaker 路径。
+3. 还请提供所有需要纳入扫描的魔改文件路径或目录。
+4. 若脚本目录下文件较多，是否允许按 modid / registry name / recipe id / event name 进行关联过滤。
 
 若用户只给了 jar，直接进入静态清单和反编译。不要因为缺源码而停下。
 
@@ -105,6 +118,8 @@ python mod-analyzer-skill/scripts/inspect_mod_jar.py <path-to-mod.jar> -o output
 - recipes、tags、loot tables、advancements、worldgen、structures、dimensions
 - GUI/texture/model/sound/particle 等资源
 - Patchouli、GuideMe 或其他内置手册内容
+- 若是魔改环境，还要扫描用户指定的 kubejs / crafttweaker / 补丁脚本目录，提取与目标 mod 相关的 recipe、event、loot、tag、registry 改动
+- 将扫描出的魔改文件单独建立“魔改证据清单”，并在后续内容清单、流程追踪和配方分析中与原始 jar 证据合并
 
 这一阶段的目标是"知道从哪里开始读"，不是直接下结论。
 
@@ -112,8 +127,9 @@ python mod-analyzer-skill/scripts/inspect_mod_jar.py <path-to-mod.jar> -o output
 
 优先级：
 1. 如果用户提供源码，直接读源码，并用 jar 静态清单校验资源完整性。
-2. 如果只有 jar，尝试使用本地可用反编译器：Vineflower / CFR / FernFlower。详细命令参考 `references/decompilation-workflow.md`。
+2. 如果只有 jar，尝试使用本地可用反编译器：Vineflower / CFR / Fernflower。详细命令参考 `references/decompilation-workflow.md`。
 3. 如果不能下载反编译器或反编译失败，使用 `javap`、class 路径、资源文件、lang、recipes、mixin 先做不完整分析，并明确限制。
+4. 如果存在魔改层，先把扫描到的 KubeJS / CraftTweaker / 补丁文件按与目标 mod 的关联度排序，再和反编译结果一起阅读，避免只看原版 jar 而漏掉实际玩法改动。
 
 反编译后优先定位：
 - 主 mod 类与初始化入口
@@ -125,7 +141,7 @@ python mod-analyzer-skill/scripts/inspect_mod_jar.py <path-to-mod.jar> -o output
 
 ### 阶段 3：建立"内容清单"而非"文件清单"
 
-把代码与资源归并成玩家可理解的内容模块。推荐表格：
+把代码、资源与魔改脚本归并成玩家可理解的内容模块。推荐表格：
 
 | 内容模块 | 玩家可见内容 | 证据文件/类 | 入口方式 | 与核心循环关系 | 置信度 |
 |---|---|---|---|---|---|
@@ -230,7 +246,7 @@ python mod-analyzer-skill/scripts/inspect_mod_jar.py <path-to-mod.jar> -o output
 
 如果用户需要**物品深度分析**（为 LLM/AI 工具生成结构化的 JSON 物品数据库），在完成阶段 0~2 后，按照以下流程：
 
-1. **完成阶段 1（静态清单）和阶段 2（反编译/源码读取）**，确保 lang 文件和配方数据可用
+1. **完成阶段 1（静态清单）和阶段 2（反编译/源码读取）**，确保 lang 文件和配方数据可用；如果存在魔改层，则先扫描并合并相关 KubeJS / CraftTweaker 文件
 2. **提取物品和方块清单**：
    - 从 `assets/<modid>/lang/en_us.json` 提取所有 `item.<modid>.xxx` 和 `block.<modid>.xxx` 键
    - 从 `assets/<modid>/lang/zh_cn.json`（或其他中文 lang）获取中文名称
