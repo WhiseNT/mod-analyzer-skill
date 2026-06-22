@@ -1,6 +1,6 @@
 ---
 name: mod-analyzer-skill
-description: "用于分析 Minecraft Mod / 模组 / mod jar / Forge / NeoForge / Fabric / Quilt 项目。用户要求反编译 jar、探查模组代码与资源、理解模组玩法、梳理物品方块机制、生成模组简介、主要玩法、核心玩法循环、细粒度流程或游戏内容文档时必须使用。该 skill 会先静态检查 jar，再按 loader 元数据、数据包资源、lang、recipe、registry、event、mixin、GUI、网络包与配置追踪证据，避免只凭类名猜测。此外还支持两种专项分析：模组设计分析（评价玩法循环、难度曲线、玩家引导的设计质量）和模组代码分析（面向开发/魔改的代码架构、mixin、事件、API、配置与魔改点梳理）。不要把本 skill 用于普通 Java 代码重构、恶意篡改第三方 mod、绕过授权、提取商业资产再发布等任务。"
+description: "用于分析 Minecraft Mod / 模组 / mod jar / Forge / NeoForge / Fabric / Quilt 项目。用户要求反编译 jar、探查模组代码与资源、理解模组玩法、梳理物品方块机制、生成模组简介、主要玩法、核心玩法循环、细粒度流程或游戏内容文档时必须使用。该 skill 会先静态检查 jar，再按 loader 元数据、数据包资源、lang、recipe、registry、event、mixin、GUI、网络包与配置追踪证据，避免只凭类名猜测。此外还支持三种专项分析：模组设计分析（评价玩法循环、难度曲线、玩家引导的设计质量）、模组代码分析（面向开发/魔改的代码架构、mixin、事件、API、配置与魔改点梳理）以及物品深度分析（面向 LLM/AI 工具的 JSON 结构化物品数据库，含配方、标签、功能描述和系统关系）。不要把本 skill 用于普通 Java 代码重构、恶意篡改第三方 mod、绕过授权、提取商业资产再发布等任务。"
 ---
 
 # Mod Analyzer Skill
@@ -17,6 +17,7 @@ description: "用于分析 Minecraft Mod / 模组 / mod jar / Forge / NeoForge /
 - 判断一个 mod "怎么玩""主线是什么""核心循环是什么""代码里有哪些隐藏机制"
 - 做模组设计分析（评价玩法循环、难度曲线、新手引导、内容组织的设计质量）
 - 做模组代码分析（面向开发/魔改：注册架构、mixin、事件、API、配置项、魔改点梳理）
+- 做物品深度分析（为 LLM/AI 工具生成结构化的 JSON 物品数据库，包含配方、功能描述、系统关系）
 
 不要把本 skill 用于普通 Java 代码重构、恶意篡改第三方 mod、绕过授权、提取商业资产再发布等任务。本 skill 默认只做静态分析和文档化。
 
@@ -70,6 +71,7 @@ output/mod-analysis/<modid-or-jar-name>/
 | **游戏内容文档**（默认） | `模组游戏内容文档-<mod-name>.md` | 玩家、策划 | 这个 mod 怎么玩？ |
 | **设计分析报告** | `模组设计分析报告-<mod-name>.md` | 策划、整合包作者 | 这个 mod 设计得好不好？ |
 | **代码分析报告** | `模组代码分析报告-<mod-name>.md` | 开发者、魔改作者 | 这个 mod 代码怎么组织的？怎么改？ |
+| **物品深度分析** | `<mod-name>_items_deep.json` | LLM/AI 工具、数据集成 | 这个 mod 的物品有什么功能？配方？系统关系？ |
 
 三种分析共享阶段 0~2（输入确认 + 静态清单 + 反编译/源码读取），阶段 3 开始分岔。如果用户没有明确指定，默认输出"游戏内容文档"。
 
@@ -224,6 +226,74 @@ python mod-analyzer-skill/scripts/inspect_mod_jar.py <path-to-mod.jar> -o output
    - 魔改指导：KubeJS/CraftTweaker 示例、配置推荐、修改策略
 5. **报告面向开发者/魔改作者**，必须提供具体的魔改示例代码
 
+### 分析类型分支：物品深度分析（LLM 物品数据库）
+
+如果用户需要**物品深度分析**（为 LLM/AI 工具生成结构化的 JSON 物品数据库），在完成阶段 0~2 后，按照以下流程：
+
+1. **完成阶段 1（静态清单）和阶段 2（反编译/源码读取）**，确保 lang 文件和配方数据可用
+2. **提取物品和方块清单**：
+   - 从 `assets/<modid>/lang/en_us.json` 提取所有 `item.<modid>.xxx` 和 `block.<modid>.xxx` 键
+   - 从 `assets/<modid>/lang/zh_cn.json`（或其他中文 lang）获取中文名称
+   - 从 `assets/<modid>/lang/en_us.json` 提取每个物品的 tooltip（`tooltip.summary` 和 `tooltip.behaviour/condition`）
+3. **解析所有配方文件**（`data/<modid>/recipes/`）：
+   - 遍历所有 JSON 配方，提取输入物品和输出物品
+   - 识别配方类型（crafting_shaped/shapeless、create:crushing、create:mixing 等），映射到对应机器
+   - 建立双向索引：`产出物品 → 配方列表`（用于 how_to_obtain）和 `消耗物品 → 配方列表`（用于 used_in_recipes）
+4. **加载标签系统**（`data/<modid>/tags/items/` 及 `data/forge/tags/items/`）：
+   - 建立 `tag_id → [物品列表]` 的映射
+   - 用标签解析配方中的 tag 引用（如 `#forge:plates/brass` → `create:brass_sheet`）
+   - 递归解析嵌套标签引用
+5. **生成物品功能描述**：
+   - 读取注册源码（如 `AllItems.java`、`AllBlocks.java`），获取每个物品的 Java 类名、稀有度、分类
+   - 对基础材料：说明用途（基于 used_in_recipes 列出被用于合成什么）
+   - 对工具/装备：结合 tooltip behaviours 生成详细用法说明
+   - 对机器方块：基于其处理的配方类型和输入输出关系，说明工作机制
+   - 对半成品：说明在什么流程中使用
+6. **构建系统关系图**：
+   - 将物品/方块按子系统分组（动力系统、流体系统、物品运输系统、加工系统、动态结构系统、铁路系统等）
+   - 为每个子系统编写描述和核心流程
+7. **输出 JSON 数据库**：
+   - 输出到 `output/extracted-data/<modid>_items_deep.json`
+   - 每条条目包含：type、name_en、name_zh、category、rarity、tooltip、how_to_obtain（按机器分组的配方）、used_in_recipes（使用此物品的配方）、function（详细功能描述）
+   - 顶层包含：mod_info、systems（子系统定义）、total_entries、entries
+
+**JSON 结构示例**：
+```json
+{
+  "mod_info": { "name": "...", "id": "...", "version": "..." },
+  "systems": {
+    "动力系统": {
+      "description": "...",
+      "core_flow": "...",
+      "source_blocks": [...],
+      "transmission_blocks": [...],
+      "processing_blocks": [...]
+    }
+  },
+  "entries": {
+    "create:wrench": {
+      "type": "item",
+      "name_en": "Wrench",
+      "name_zh": "扳手",
+      "category": "工具",
+      "tooltip": { "summary_en": "...", "behaviours": [...] },
+      "how_to_obtain": {
+        "crafting_table": [{ "recipe_id": "...", "inputs": [...] }]
+      },
+      "used_in_recipes": [
+        { "recipe_id": "...", "machine": "...", "outputs": [...] }
+      ],
+      "function": "Wrench（扳手）是机械动力的工具..."
+    }
+  }
+}
+```
+
+**关键要求**：
+- 所有功能描述必须有证据支撑（lang、recipe、tag 或源码）
+- 配方中的 tag 引用必须通过标签系统解析为具体物品
+- 生成的 JSON 必须能让其他 LLM 仅凭此文件就准确理解每个物品的完整语义
+
 ## Loader 专项探查路径
 
 ### Forge / NeoForge
@@ -285,6 +355,7 @@ Mixin 往往定义"这个 mod 真正改变了什么"。必须记录：
 
 - `scripts/inspect_mod_jar.py`：jar 静态清单生成脚本
 - `scripts/decompile_mod_jar.py`：调用本地 CFR/Vineflower/FernFlower 反编译器的辅助脚本
+- `scripts/generate_item_deep_analysis.py`：物品深度分析（LLM 物品数据库）生成脚本模板
 - `references/decompilation-workflow.md`：反编译与代码探查流程（含详细命令和 loader 入口识别路径）
 - `references/report-template.md`：游戏内容文档模板
 - `references/design-analysis-template.md`：模组设计分析报告模板
